@@ -1,0 +1,4 @@
+# uv compiles userpatches/overlay/rknn-requirements.txt from userpatches/rknn-requirements.in, with the
+# command in the lock's header.
+[tools]
+uv = '0.12.21'
