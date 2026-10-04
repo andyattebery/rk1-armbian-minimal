@@ -5,11 +5,6 @@ trixie on Rockchip's vendor kernel, the only kernel that runs the NPU's full RKN
 video and the Mali GPU's proprietary userspace (libmali). One image for every node; first boot is
 Armbian's default first-login setup. GitHub Actions builds it and publishes each build as a release.
 
-## Status: WIP
-
-The CI build is new and has not published a release yet. The same build, made locally from the same
-inputs on 2026-10-03, runs on an RK1 and passed every hardware check below.
-
 ## What the image holds
 
 | Part | What | From |
@@ -21,12 +16,6 @@ inputs on 2026-10-03, runs on an RK1 and passed every hardware check below.
 | NPU | `/usr/lib/librknnrt.so` 2.3.2, `/usr/lib/librkllmrt.so` 1.3.1; RKNN Toolkit Lite2 in the venv `/opt/rknn-lite2` (CPython 3.12) | airockchip, PyPI, uv |
 | Video | `jellyfin-ffmpeg8` 8.1.3-1 (rkmpp codecs, rkrga filters) in `/usr/lib/jellyfin-ffmpeg/` | repo.jellyfin.org |
 | Access | Armbian's default first login: root/1234 until the first root login, which sets a new root password and creates a user | Armbian |
-
-Checked on an RK1 on 2026-10-03:
-- OpenCL and Vulkan on the Mali-G610.
-- RKNN resnet18 on the NPU, and the RKLLM runtime.
-- Through MPP: H.264 encode at 14x realtime (1080p), and decode into RGA scaling at 31x.
-- Sensors and fan, NVMe, gigabit Ethernet, and the package holds.
 
 ## Files
 
@@ -53,8 +42,8 @@ Checked on an RK1 on 2026-10-03:
    tpi flash -n <node> -i <name>.img.xz --sha256 <hash from the .sha>
    tpi power on -n <node>
    ```
-   The BMC decompresses `.xz` itself and checks the stream against the hash. Turing quotes about
-   8 minutes per GB of image.
+   The BMC decompresses `.xz` itself and checks the stream against the hash. A flash takes about
+   7 minutes.
 
 ## First boot
 
@@ -142,7 +131,7 @@ each under its own licence.
 - **libmali must match the kernel's GPU driver.** The vendor kernel's kbase is DDK g29p1, so the
   userspace is g29p1.
   - If OpenCL or Vulkan finds no device, the fallback is tsukumijima's g24p0 packages. kbase
-    negotiates down to an older userspace, but g24p0 on this kbase is untested.
+    negotiates down to an older userspace, but every g24p0 report is on an older kbase (g25p0, rkr5.1).
   - ginkage deletes superseded releases, so a 404 at the libmali download means re-pinning to the
     current release.
 - **No panthor.** The `panthor-gpu` overlay binds the GPU to panthor instead of kbase, and libmali
