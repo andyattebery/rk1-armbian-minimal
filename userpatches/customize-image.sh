@@ -2,17 +2,22 @@
 # Armbian's image-customization hook for the RK1 image (README.md). Armbian copies it into
 # the image and runs it there as root (lib/functions/rootfs/customize.sh:24-34) with the arguments
 #   RELEASE LINUXFAMILY BOARD BUILD_DESKTOP ARCH
-# after its own packages are installed and before its apt repo is enabled: Debian's repos are
-# reachable here, Armbian's are not. userpatches/overlay/ is bind-mounted read-only at
-# /tmp/overlay. Any non-zero exit fails the build.
+# after its own packages are installed and before its apt repo is enabled: the release's own repos
+# (Debian's or Ubuntu's) are reachable here, Armbian's are not. userpatches/overlay/ is bind-mounted
+# read-only at /tmp/overlay. Any non-zero exit fails the build.
 set -euo pipefail
 
 RELEASE="$1"
 BOARD="$3"
-# Everything below is written for one target: Debian 13 package names, Jellyfin's trixie suite,
-# and the RK1's GPU and NPU.
-if [[ "$RELEASE" != trixie || "$BOARD" != turing-rk1 ]]; then
-    echo "customize-image.sh: written for trixie on turing-rk1, called for $RELEASE on $BOARD" >&2
+# Written for two targets on the RK1, Debian 13 (trixie) and Ubuntu 26.04 (resolute): the package
+# names below exist in both; the release picks Jellyfin's repo.
+case "$RELEASE" in
+    trixie) JELLYFIN_DISTRO=debian ;;
+    resolute) JELLYFIN_DISTRO=ubuntu ;;
+    *) JELLYFIN_DISTRO="" ;;
+esac
+if [[ -z "$JELLYFIN_DISTRO" || "$BOARD" != turing-rk1 ]]; then
+    echo "customize-image.sh: written for trixie or resolute on turing-rk1, called for $RELEASE on $BOARD" >&2
     exit 1
 fi
 
@@ -37,7 +42,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
     ca-certificates curl clinfo vulkan-tools ocl-icd-libopencl1 libgomp1
 
-# GPU: Mali G610 userspace (OpenCL 3.0, Vulkan 1.3, GLES 3.2), DDK g29p1 to match the vendor
+# GPU: Mali G610 userspace (OpenCL 3.0, Vulkan 1.4, GLES 3.2), DDK g29p1 to match the vendor
 # kernel's kbase driver. It installs the OpenCL and Vulkan ICD files clinfo and vulkaninfo read.
 fetch_verified "$LIBMALI_URL" "$LIBMALI_SHA256" "$WORK/libmali.deb"
 apt-get install -y --no-install-recommends "$WORK/libmali.deb"
@@ -48,9 +53,10 @@ fetch_verified "$RKLLMRT_URL" "$RKLLMRT_SHA256" "$WORK/librkllmrt.so"
 install -m 0644 "$WORK/librknnrt.so" "$WORK/librkllmrt.so" /usr/lib/
 ldconfig
 
-# RKNN Toolkit Lite2's newest wheel is cp312 and trixie's python3 is 3.13, so uv installs CPython
-# 3.12 into /opt/python and a venv on it at /opt/rknn-lite2. Dependencies come from the
-# hash-locked rknn-requirements.txt, wheels only; the toolkit wheel is checked against its pin.
+# RKNN Toolkit Lite2's newest wheel is cp312 and both releases' python3 is newer (trixie 3.13,
+# resolute 3.14), so uv installs CPython 3.12 into /opt/python and a venv on it at
+# /opt/rknn-lite2. Dependencies come from the hash-locked rknn-requirements.txt, wheels only; the
+# toolkit wheel is checked against its pin.
 # Bytecode is compiled now because the venv is root-owned and its users can't write __pycache__.
 fetch_verified "$UV_URL" "$UV_SHA256" "$WORK/uv.tar.gz"
 tar -xzf "$WORK/uv.tar.gz" -C "$WORK"
@@ -69,17 +75,17 @@ uv pip install --python /opt/rknn-lite2/bin/python --no-deps "$WHEEL"
 install -d -m 0755 /etc/apt/keyrings
 fetch_verified "$JELLYFIN_KEY_URL" "$JELLYFIN_KEY_SHA256" /etc/apt/keyrings/jellyfin.asc
 chmod 0644 /etc/apt/keyrings/jellyfin.asc
-cat > /etc/apt/sources.list.d/jellyfin.sources <<'EOF'
+cat > /etc/apt/sources.list.d/jellyfin.sources <<EOF
 Types: deb
-URIs: https://repo.jellyfin.org/debian
-Suites: trixie
+URIs: https://repo.jellyfin.org/$JELLYFIN_DISTRO
+Suites: $RELEASE
 Components: main
 Architectures: arm64
 Signed-By: /etc/apt/keyrings/jellyfin.asc
 EOF
 install -m 0644 "$OVERLAY/jellyfin.pref" /etc/apt/preferences.d/jellyfin
 apt-get update
-apt-get install -y --no-install-recommends "jellyfin-ffmpeg8=$JELLYFIN_FFMPEG_VERSION"
+apt-get install -y --no-install-recommends "jellyfin-ffmpeg8=$JELLYFIN_FFMPEG_VERSION-$RELEASE"
 
 # Device permissions: the GPU (Armbian's own rule from packages/bsp/rk3399, which its RK3588
 # family no longer installs: rockchip-rk3588.conf makes family_tweaks_bsp a no-op), and MPP, RGA

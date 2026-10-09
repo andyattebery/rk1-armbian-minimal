@@ -1,6 +1,7 @@
-# Builds the image and publishes it as a GitHub release (README.md). Runs when what the image is
-# built from changes on main, or by hand from the Actions tab.
-name: Build image
+# Builds the image for each release, Debian 13 (trixie) and Ubuntu 26.04 (resolute), and publishes
+# both as one GitHub release, only when both built (README.md). Runs when what the images are built
+# from changes on main, or by hand from the Actions tab.
+name: Build images
 
 on:
   push:
@@ -22,32 +23,78 @@ jobs:
     runs-on: ubuntu-24.04-arm
     # GitHub's limit for a job on its runners.
     timeout-minutes: 360
+    strategy:
+      # One release failing doesn't cancel the other, so each run shows both results.
+      fail-fast: false
+      matrix:
+        release: [trixie, resolute]
+    env:
+      RELEASE: ${{ matrix.release }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Build the image
-        run: scripts/build.sh --work-dir "$RUNNER_TEMP/work" --out "$RUNNER_TEMP/out"
+        run: scripts/build.sh --release "$RELEASE" --work-dir "$RUNNER_TEMP/work" --out "$RUNNER_TEMP/out"
+
+      # The .img.xz, .sha and .distro, for the publish job. The image is already xz-compressed.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-${{ matrix.release }}
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  publish:
+    # Runs only when every release built.
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: image-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/out
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           . ./versions.env
-          images=("$RUNNER_TEMP"/out/*.img.xz)
-          image="${images[0]}"
-          name="$(basename "$image")"
-          # Armbian-unofficial_<armbian version>_Turing-rk1_trixie_vendor_<kernel>_minimal.img.xz
-          kernel="$(cut -d _ -f 6 <<< "$name")"
+          shopt -s nullglob
+          # Armbian-unofficial_<armbian version>_Turing-rk1_<release>_vendor_<kernel>_minimal.img.xz
+          armbian_version="" kernel="" notes="" assets=()
+          for release in trixie resolute; do
+            images=("$RUNNER_TEMP"/out/*_"$release"_vendor_*.img.xz)
+            if [[ ${#images[@]} -ne 1 || ! -s "${images[0]}.sha" || ! -s "${images[0]}.distro" ]]; then
+              echo "Expected one $release .img.xz with its .sha and .distro, found: ${images[*]}"
+              exit 1
+            fi
+            image="${images[0]}"
+            name="$(basename "$image")"
+            if [[ -z "$armbian_version" ]]; then
+              armbian_version="$(cut -d _ -f 2 <<< "$name")"
+              kernel="$(cut -d _ -f 6 <<< "$name")"
+            elif [[ "$(cut -d _ -f 2 <<< "$name")" != "$armbian_version" || "$(cut -d _ -f 6 <<< "$name")" != "$kernel" ]]; then
+              echo "$name has a different Armbian or kernel version from the other image"
+              exit 1
+            fi
+            printf -v paragraph '**%s**\n`%s`\nsha256 `%s`\n\n' \
+              "$(cat "$image.distro")" "$name" "$(cut -d ' ' -f 1 "$image.sha")"
+            notes+="$paragraph"
+            assets+=("$image" "$image.sha")
+          done
+          [[ "$armbian_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || { echo "No Armbian version in $name"; exit 1; }
           [[ "$kernel" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "No kernel version in $name"; exit 1; }
-          sha="$(cut -d ' ' -f 1 "$image.sha")"
-          notes="Debian 13 (trixie) on Rockchip's vendor kernel $kernel for the Turing RK1, built with the Armbian build framework at $ARMBIAN_BUILD_SHA (kernel: armbian/linux-rockchip $KERNEL_COMMIT).
+          notes+="Both run Rockchip's vendor kernel $kernel for the Turing RK1 (armbian/linux-rockchip $KERNEL_COMMIT), built with the Armbian build framework at $ARMBIAN_BUILD_SHA.
 
           First boot is Armbian's: log in over SSH as root with password 1234 (the serial console logs root in by itself). It asks for a new root password and creates a user.
 
-          sha256 of the .img.xz: $sha
           Built from $GITHUB_SHA.
 
           Attached licences: Arm's EULA for the Mali GPU userspace (libmali), Rockchip's licence for the RKLLM runtime, and Rockchip's statement for the RKNN runtime and RKNN Toolkit Lite2."
           gh release create "$kernel-$GITHUB_RUN_NUMBER" --target "$GITHUB_SHA" \
-            --title "Debian 13, vendor kernel $kernel (build $GITHUB_RUN_NUMBER)" --notes "$notes" \
-            "$image" "$image.sha" licenses/*
+            --title "Armbian $armbian_version, kernel $kernel" --notes "$notes" \
+            "${assets[@]}" licenses/*

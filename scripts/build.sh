@@ -1,37 +1,41 @@
 #!/usr/bin/env bash
-# Builds the image (README.md) on a Linux host -- Debian 13 or Ubuntu 24.04, arm64 or amd64 -- as a
-# user with passwordless sudo, which Armbian's compile.sh relaunches itself with. CI runs it on
-# GitHub's ubuntu-24.04-arm runner; on a Mac, run it in an OrbStack Linux machine (README.md).
+# Builds one of the image's two releases (README.md), Debian 13 (trixie) or Ubuntu 26.04 (resolute),
+# on a Linux host -- Debian 13 or Ubuntu 24.04, arm64 or amd64 -- as a user with passwordless sudo,
+# which Armbian's compile.sh relaunches itself with. CI runs it on GitHub's ubuntu-24.04-arm runner;
+# on a Mac, run it in an OrbStack Linux machine (README.md).
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 usage() {
-    echo "Usage: $(basename "$0") --work-dir <dir> --out <dir>"
+    echo "Usage: $(basename "$0") --release <trixie|resolute> --work-dir <dir> --out <dir>"
     echo
     echo "Fetches armbian/build at ARMBIAN_BUILD_SHA (versions.env) into <work-dir>/armbian-build,"
-    echo "copies userpatches/ and versions.env into it, builds, and puts <name>.img.xz and"
-    echo "<name>.img.xz.sha in <out>."
+    echo "copies userpatches/ and versions.env into it, builds the release (trixie: Debian 13,"
+    echo "resolute: Ubuntu 26.04), and puts <name>.img.xz, <name>.img.xz.sha and"
+    echo "<name>.img.xz.distro (the distro's version, one line) in <out>."
     echo
     echo "<work-dir> must be on a case-sensitive filesystem: if Armbian has to build the kernel, its"
     echo "tree has file names that differ only by case. Reusing it reuses Armbian's caches."
     echo
     echo "Example:"
-    echo "  $(basename "$0") --work-dir ~/rk1-work --out out"
+    echo "  $(basename "$0") --release resolute --work-dir ~/rk1-work --out out"
     exit 1
 }
 
+RELEASE=""
 WORK=""
 OUT=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --release) RELEASE="${2:-}"; shift 2 ;;
         --work-dir) WORK="${2:-}"; shift 2 ;;
         --out) OUT="${2:-}"; shift 2 ;;
         -h|--help) usage ;;
         *) echo "Unknown argument: $1"; usage ;;
     esac
 done
-[[ -n "$WORK" && -n "$OUT" ]] || usage
+[[ "$RELEASE" =~ ^(trixie|resolute)$ && -n "$WORK" && -n "$OUT" ]] || usage
 
 for tool in git rsync sha256sum sudo; do
     command -v "$tool" >/dev/null || { echo "Error: $tool not found in PATH"; exit 1; }
@@ -70,13 +74,13 @@ git -C "$SRC" checkout -q --detach "$ARMBIAN_BUILD_SHA"
 [[ ! -e "$SRC/userpatches" ]] || sudo chown -R "$(id -u):$(id -g)" "$SRC/userpatches"
 rsync -a --delete "$REPO_DIR/userpatches/" "$SRC/userpatches/"
 cp "$REPO_DIR/versions.env" "$SRC/userpatches/overlay/versions.env"
-# Left by an earlier run; the copy-out below needs exactly one image.
-sudo rm -f "$SRC"/output/images/*.img*
+# Left by an earlier run; the copy-out below needs exactly one image, and this build's distro line.
+sudo rm -f "$SRC"/output/images/*.img* "$SRC/output/distro.txt"
 
 # PREFER_DOCKER on the command line: Armbian decides between Docker and sudo before it reads
 # config-rk1.conf, and on a host with Docker it would otherwise build in a container.
-echo "Building the image..."
-(cd "$SRC" && ./compile.sh build rk1 PREFER_DOCKER=no)
+echo "Building the $RELEASE image..."
+(cd "$SRC" && ./compile.sh build rk1 RELEASE="$RELEASE" PREFER_DOCKER=no)
 
 shopt -s nullglob
 imgs=("$SRC"/output/images/*.img.xz)
@@ -85,8 +89,13 @@ if [[ ${#imgs[@]} -ne 1 ]]; then
     exit 1
 fi
 NAME="$(basename "${imgs[0]}")"
-if [[ ! "$NAME" =~ ^[A-Za-z0-9._+-]+\.img\.xz$ ]]; then
-    echo "Error: unexpected image file name: $NAME"
+if [[ ! "$NAME" =~ ^[A-Za-z0-9._+-]+\.img\.xz$ || "$NAME" != *"_${RELEASE}_vendor_"* ]]; then
+    echo "Error: unexpected image file name for $RELEASE: $NAME"
+    exit 1
+fi
+# Written by the distro-version hook in config-rk1.conf.
+if [[ ! -s "$SRC/output/distro.txt" ]]; then
+    echo "Error: the build wrote no output/distro.txt"
     exit 1
 fi
 
@@ -103,7 +112,9 @@ if [[ ! "$WANT" =~ ^[0-9a-f]{64}$ || "$GOT" != "$WANT" ]]; then
 fi
 mv -f "$OUT/.$NAME.partial" "$OUT/$NAME"
 printf '%s  %s\n' "$GOT" "$NAME" > "$OUT/$NAME.sha"
-sudo rm -f "$SRC"/output/images/*.img*
+cp "$SRC/output/distro.txt" "$OUT/$NAME.distro"
+sudo rm -f "$SRC"/output/images/*.img* "$SRC/output/distro.txt"
 
 echo
 echo "Image: $OUT/$NAME ($(du -h "$OUT/$NAME" | cut -f 1))"
+echo "Distro: $(cat "$OUT/$NAME.distro")"
