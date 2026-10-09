@@ -116,8 +116,8 @@ without qemu.
 - **When:** a push to `main` that changes `versions.env`, `userpatches/`, `scripts/`, `licenses/` or
   the workflow, or a manual run from the Actions tab.
 - **What it publishes:** one release with both images, only when both built. It is named
-  `Armbian <Armbian version>, kernel <kernel version>` and tagged `<kernel version>-<run number>`
-  (for example `6.1.172-1`). It carries each `.img.xz`, its `.sha` and the three licence texts, and
+  `Armbian <Armbian version>, kernel <kernel version> (build <run number>)` and tagged
+  `<kernel version>-<run number>` (for example `6.1.172-1`). It carries each `.img.xz`, its `.sha` and the three licence texts, and
   its notes give each image's distro version and sha256.
 - **Not Armbian's own GitHub Action.** Its `action.yml` merges the unpinned `armbian/os` userpatches
   into the build, versions the image from `armbian/ci`, and uploads build logs to Armbian's paste

@@ -98,5 +98,5 @@ jobs:
 
           Attached licences: Arm's EULA for the Mali GPU userspace (libmali), Rockchip's licence for the RKLLM runtime, and Rockchip's statement for the RKNN runtime and RKNN Toolkit Lite2."
           gh release create "$kernel-$GITHUB_RUN_NUMBER" --target "$GITHUB_SHA" \
-            --title "Armbian $armbian_version, kernel $kernel" --notes "$notes" \
+            --title "Armbian $armbian_version, kernel $kernel (build $GITHUB_RUN_NUMBER)" --notes "$notes" \
             "${assets[@]}" licenses/*
