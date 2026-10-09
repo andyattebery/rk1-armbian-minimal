@@ -64,7 +64,7 @@ jobs:
         run: |
           . ./versions.env
           shopt -s nullglob
-          # Armbian-unofficial_<armbian version>_Turing-rk1_<release>_vendor_<kernel>_minimal.img.xz
+          # Armbian-unofficial_<armbian version>_Turing-rk1_<release>_vendor_<kernel>-ci_minimal.img.xz
           armbian_version="" kernel="" notes="" assets=()
           for release in trixie resolute; do
             images=("$RUNNER_TEMP"/out/*_"$release"_vendor_*.img.xz)
@@ -74,10 +74,12 @@ jobs:
             fi
             image="${images[0]}"
             name="$(basename "$image")"
+            v="$(cut -d _ -f 2 <<< "$name")"
+            # Armbian's cloud-init extension appends -ci to the kernel field (rootfs-to-image.sh:19).
+            k="$(cut -d _ -f 6 <<< "$name")"; k="${k%-ci}"
             if [[ -z "$armbian_version" ]]; then
-              armbian_version="$(cut -d _ -f 2 <<< "$name")"
-              kernel="$(cut -d _ -f 6 <<< "$name")"
-            elif [[ "$(cut -d _ -f 2 <<< "$name")" != "$armbian_version" || "$(cut -d _ -f 6 <<< "$name")" != "$kernel" ]]; then
+              armbian_version="$v" kernel="$k"
+            elif [[ "$v" != "$armbian_version" || "$k" != "$kernel" ]]; then
               echo "$name has a different Armbian or kernel version from the other image"
               exit 1
             fi
@@ -90,7 +92,7 @@ jobs:
           [[ "$kernel" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "No kernel version in $name"; exit 1; }
           notes+="Both run Rockchip's vendor kernel $kernel for the Turing RK1 (armbian/linux-rockchip $KERNEL_COMMIT), built with the Armbian build framework at $ARMBIAN_BUILD_SHA.
 
-          First boot is Armbian's: log in over SSH as root with password 1234 (the serial console logs root in by itself). It asks for a new root password and creates a user.
+          First boot is cloud-init (NoCloud). A user-data and meta-data written into the FAT armbi_boot partition before flashing set up the node. Without them, log in as root with password 1234 over SSH or the serial console; it must be changed at the first login. Armbian's usual first-login setup (user, shell, locale, time zone) then runs with: touch /root/.not_logged_in_yet && bash /usr/lib/armbian/armbian-firstlogin. Networking is Armbian's DHCP on every Ethernet port.
 
           Built from $GITHUB_SHA.
 

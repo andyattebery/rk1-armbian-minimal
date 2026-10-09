@@ -3,8 +3,9 @@
 A flashable eMMC image for the Turing RK1 (RK3588), built with the Armbian build framework: Debian 13
 trixie or Ubuntu 26.04 resolute on Rockchip's vendor kernel, the only kernel that runs the NPU's full
 RKNN/RKLLM stack, MPP video and the Mali GPU's proprietary userspace (libmali). Each release carries
-two images, one per distro, and either goes on any node; first boot is Armbian's default first-login
-setup. GitHub Actions builds both and publishes each build as one release.
+two images, one per distro, and either goes on any node; first boot is cloud-init, from a seed
+written into the image before flashing. GitHub Actions builds both and publishes each build as one
+release.
 
 ## What the image holds
 
@@ -17,16 +18,16 @@ setup. GitHub Actions builds both and publishes each build as one release.
 | NPU | `/usr/lib/librknnrt.so` 2.3.2, `/usr/lib/librkllmrt.so` 1.3.1; RKNN Toolkit Lite2 in the venv `/opt/rknn-lite2` (CPython 3.12: the toolkit's newest wheel is cp312, and both distros' Python is newer) | airockchip, PyPI, uv |
 | Video | `jellyfin-ffmpeg8` 8.1.3-1 (rkmpp codecs, rkrga filters) in `/usr/lib/jellyfin-ffmpeg/` | repo.jellyfin.org |
 | 2.5 GbE | `r8169` with the RTL8125 firmware, for a Realtek RTL8125 card in the Turing Pi 2's mini-PCIe slot | the kernel, armbian-firmware |
-| Access | Armbian's default first login: root/1234 until the first root login, which sets a new root password and creates a user | Armbian |
+| Access | cloud-init (NoCloud), from the `user-data` and `meta-data` in the FAT `armbi_boot` partition. Unseeded: root/1234, which must be changed at the first login | Armbian's `cloud-init` extension |
 
 ## Files
 
 | Path | What it is |
 |---|---|
 | `versions.env` | Every pin: the Armbian commit, the kernel commit, and each download's URL and SHA-256. |
-| `userpatches/config-rk1.conf` | The Armbian build config: board, branch, the kernel-pin hook, the distro-version hook, `.img.xz` output. The release comes from `build.sh`. |
-| `userpatches/customize-image.sh` | Runs in the image chroot: GPU, NPU and video. |
-| `userpatches/overlay/` | Files `customize-image.sh` installs: the apt pin for Jellyfin's repo, the udev rules for the GPU (`50-mali.rules`) and for MPP, RGA and the DMA heaps (Jellyfin's), and `rknn-requirements.txt`, the hash-locked RKNN Lite2 dependencies. |
+| `userpatches/config-rk1.conf` | The Armbian build config: board, branch, the `cloud-init` extension and the setting that keeps cloud-init's SSH host keys, the kernel-pin hook, the distro-version hook, `.img.xz` output. The release comes from `build.sh`. |
+| `userpatches/customize-image.sh` | Runs in the image chroot: GPU, NPU and video; turns cloud-init's networking off and expires root's password. |
+| `userpatches/overlay/` | Files `customize-image.sh` installs: the apt pin for Jellyfin's repo, the udev rules for the GPU (`50-mali.rules`) and for MPP, RGA and the DMA heaps (Jellyfin's), `rknn-requirements.txt`, the hash-locked RKNN Lite2 dependencies, and `99-network-config-disabled.cfg`, which turns cloud-init's networking off. |
 | `userpatches/rknn-requirements.in` | What that lock is compiled from. |
 | `scripts/build.sh` | The build of one release, on a Linux host: `--release trixie` or `--release resolute`. CI and local builds both run it. Prints its usage with `-h`. |
 | `.github/workflows/build.yml` | The CI build of both releases, and the release that carries them. |
@@ -38,7 +39,8 @@ setup. GitHub Actions builds both and publishes each build as one release.
 1. Download the `_trixie_` (Debian 13) or `_resolute_` (Ubuntu 26.04) `.img.xz` and its `.sha` from
    a [release](https://github.com/andyattebery/rk1-armbian-minimal/releases).
 2. Check them: `sha256sum -c <name>.img.xz.sha` (on macOS, `shasum -a 256 -c <name>.img.xz.sha`).
-3. On a Turing Pi 2, write it to the node's eMMC through the BMC with Turing's `tpi`:
+3. To give the node its own settings, write a cloud-init seed into the image now (First boot).
+4. On a Turing Pi 2, write it to the node's eMMC through the BMC with Turing's `tpi`:
    ```sh
    tpi power off -n <node>
    tpi flash -n <node> -i <name>.img.xz --sha256 <hash from the .sha>
@@ -49,15 +51,51 @@ setup. GitHub Actions builds both and publishes each build as one release.
 
 ## First boot
 
-Log in over SSH as root with password `1234`. On the serial console root is logged in by itself
-(`tpi uart -n <node> get` shows it). Either way, Armbian's first-login setup then:
+cloud-init sets the node up, with its NoCloud data source. It reads `user-data` and `meta-data` from
+the FAT partition labelled `armbi_boot`, partition 1, which is also `/boot`. It also makes the SSH
+host keys. Armbian's first-login setup doesn't start by itself.
+
+### With a cloud-init seed
+
+Replace `user-data` and `meta-data` in that partition before flashing. mtools writes them into a
+decompressed copy without mounting it:
+```sh
+xz -dc <name>.img.xz > seeded.img
+fdisk -l seeded.img          # partition 1's start sector (Linux)
+mcopy -D o -i seeded.img@@<start>S user-data ::user-data
+mcopy -D o -i seeded.img@@<start>S meta-data ::meta-data
+xz -T0 seeded.img            # writes seeded.img.xz
+sha256sum seeded.img.xz      # the hash for tpi flash --sha256
+```
+Then flash `seeded.img.xz` with that hash. Compressing it again keeps the flash short, because the
+BMC decompresses `.xz` itself.
+- **`meta-data`** needs `instance-id` and `local-hostname`, the hostname. The image's own has neither:
+  it says `instance_id`, which cloud-init doesn't read, so every unseeded node is instance `nocloud`.
+- **`user-data`** is a `#cloud-config` file: users, SSH keys, time zone and so on. It doesn't change
+  root, which keeps password `1234`, expired. Lock it from `user-data` with
+  `runcmd: [[passwd, -l, root]]`.
+- **Networking** is Armbian's DHCP on every Ethernet port. cloud-init's is turned off, so a
+  `network-config` there does nothing.
+
+### Without a seed
+
+Log in as root with password `1234`, over SSH or on the serial console, where root is logged in by
+itself (`tpi uart -n <node> get` shows it). The password has expired, so the first login asks for
+`1234` again and then for a new one.
+
+Then start Armbian's first-login setup from a root shell on a terminal:
+```sh
+touch /root/.not_logged_in_yet && bash /usr/lib/armbian/armbian-firstlogin
+```
+It:
 - asks for a new root password and a shell (bash or zsh);
 - creates a user, in `sudo`, `video` and `render`, so the GPU and NPU work for it;
 - offers to set the time zone and locale from your location, which sends the node's public IP to
   ipinfo.io and ipwhois.app.
 
-Until then the hostname is `turing-rk1` and the locale `en_US.UTF-8`. The time zone is the build
-host's (`Etc/UTC` from GitHub's runners). SSH host keys are made on first boot.
+cloud-init still runs, on the image's defaults. The hostname becomes `armbian`, and it creates the
+distro's default user (`ubuntu` or `debian`), locked, with no password or keys. The time zone is the
+build host's (`Etc/UTC` from GitHub's runners).
 
 ## Building
 
@@ -131,8 +169,19 @@ installs), each under its own licence.
 - **No `lib.config`.** Armbian `main` aborts a build that has `userpatches/lib.config`.
 - **`customize-image.sh` runs without Armbian's apt repo.** Only the release's own repos (Debian's or
   Ubuntu's) are enabled at that point.
+- **`/boot` is FAT:** the 512 MiB `armbi_boot` partition, which the `cloud-init` extension requires
+  so NoCloud can read it. FAT holds no symlinks, so Armbian's kernel packages and its initramfs hook
+  write plain files there instead.
+- **cloud-init's networking is off.** The extension removes Armbian's `/etc/netplan/armbian-*`, but
+  not its `10-dhcp-all-interfaces.yaml`, so cloud-init's network config would be a second one for
+  the same ports. `overlay/99-network-config-disabled.cfg` turns cloud-init's off.
+- **The image name has `-ci` after the kernel version** (`…_vendor_6.1.172-ci_minimal.img.xz`). The
+  extension adds it; the workflow strips it for the release's tag and title.
+- **SSH host keys come from cloud-init.** By default `armbian-firstrun` deletes and regenerates them
+  on the first boot, after ssh has started. `OPENSSHD_REGENERATE_HOST_KEYS=false` in
+  `config-rk1.conf` keeps cloud-init's.
 - **`/etc/os-release` names Armbian.** Armbian's `base-files` rewrites it. The distro's own is
-  `/etc/os-release.orig`, which the distro-version hook in `config-rk1.conf` reads.
+  `/usr/lib/os-release`, which the distro-version hook in `config-rk1.conf` reads.
 - **Armbian's RK3588 family installs no GPU udev rule.** `rockchip64_common.inc` would install
   `50-mali.rules`, but `rockchip-rk3588.conf` replaces that function with a no-op, so `/dev/mali0`
   would be root-only. The overlay brings the rule.

@@ -93,4 +93,11 @@ apt-get install -y --no-install-recommends "jellyfin-ffmpeg8=$JELLYFIN_FFMPEG_VE
 install -m 0644 "$OVERLAY/50-mali.rules" /etc/udev/rules.d/
 install -m 0644 "$OVERLAY/99-rk-device-permissions.rules" /etc/udev/rules.d/
 
+# First boot is cloud-init (config-rk1.conf). Its networking is off, so Armbian's DHCP stays the only
+# network config. The directory comes with the cloud-init package; without it this fails the build.
+install -m 0644 "$OVERLAY/99-network-config-disabled.cfg" /etc/cloud/cloud.cfg.d/
+# The cloud-init extension removes Armbian's first-login trigger, so nothing else would make root
+# change 1234 on an unseeded flash. Expire it: the first root login must set a new password.
+chage -d 0 root
+
 apt-get clean
