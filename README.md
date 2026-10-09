@@ -18,7 +18,7 @@ release.
 | NPU | `/usr/lib/librknnrt.so` 2.3.2, `/usr/lib/librkllmrt.so` 1.3.1; RKNN Toolkit Lite2 in the venv `/opt/rknn-lite2` (CPython 3.12: the toolkit's newest wheel is cp312, and both distros' Python is newer) | airockchip, PyPI, uv |
 | Video | `jellyfin-ffmpeg8` 8.1.3-1 (rkmpp codecs, rkrga filters) in `/usr/lib/jellyfin-ffmpeg/` | repo.jellyfin.org |
 | 2.5 GbE | `r8169` with the RTL8125 firmware, for a Realtek RTL8125 card in the Turing Pi 2's mini-PCIe slot | the kernel, armbian-firmware |
-| Access | cloud-init (NoCloud), from the `user-data` and `meta-data` in the FAT `armbi_boot` partition. Unseeded: root/1234, which must be changed at the first login | Armbian's `cloud-init` extension |
+| Access | cloud-init (NoCloud), from the `user-data` and `meta-data` in the FAT `armbi_boot` partition. Unseeded: root/1234, until changed | Armbian's `cloud-init` extension |
 
 ## Files
 
@@ -26,7 +26,7 @@ release.
 |---|---|
 | `versions.env` | Every pin: the Armbian commit, the kernel commit, and each download's URL and SHA-256. |
 | `userpatches/config-rk1.conf` | The Armbian build config: board, branch, the `cloud-init` extension and the setting that keeps cloud-init's SSH host keys, the kernel-pin hook, the distro-version hook, `.img.xz` output. The release comes from `build.sh`. |
-| `userpatches/customize-image.sh` | Runs in the image chroot: GPU, NPU and video; turns cloud-init's networking off and expires root's password. |
+| `userpatches/customize-image.sh` | Runs in the image chroot: GPU, NPU and video; turns cloud-init's networking off. |
 | `userpatches/overlay/` | Files `customize-image.sh` installs: the apt pin for Jellyfin's repo, the udev rules for the GPU (`50-mali.rules`) and for MPP, RGA and the DMA heaps (Jellyfin's), `rknn-requirements.txt`, the hash-locked RKNN Lite2 dependencies, and `99-network-config-disabled.cfg`, which turns cloud-init's networking off. |
 | `userpatches/rknn-requirements.in` | What that lock is compiled from. |
 | `scripts/build.sh` | The build of one release, on a Linux host: `--release trixie` or `--release resolute`. CI and local builds both run it. Prints its usage with `-h`. |
@@ -72,18 +72,18 @@ BMC decompresses `.xz` itself.
 - **`meta-data`** needs `instance-id` and `local-hostname`, the hostname. The image's own has neither:
   it says `instance_id`, which cloud-init doesn't read, so every unseeded node is instance `nocloud`.
 - **`user-data`** is a `#cloud-config` file: users, SSH keys, time zone and so on. It doesn't change
-  root, which keeps password `1234`, expired. Lock it from `user-data` with
-  `runcmd: [[passwd, -l, root]]`.
+  root, which keeps password `1234`. `runcmd: [[usermod, -p, "*", root]]` replaces it, leaving root
+  with no password.
 - **Networking** is Armbian's DHCP on every Ethernet port. cloud-init's is turned off, so a
   `network-config` there does nothing.
 
 ### Without a seed
 
 Log in as root with password `1234`, over SSH or on the serial console, where root is logged in by
-itself (`tpi uart -n <node> get` shows it). The password has expired, so the first login asks for
-`1234` again and then for a new one.
+itself (`tpi uart -n <node> get` shows it). Change it with `passwd`; nothing forces the change.
 
-Then start Armbian's first-login setup from a root shell on a terminal:
+Or start Armbian's first-login setup, which sets a new root password too, from a root shell on a
+terminal:
 ```sh
 touch /root/.not_logged_in_yet && bash /usr/lib/armbian/armbian-firstlogin
 ```
@@ -180,6 +180,10 @@ installs), each under its own licence.
 - **SSH host keys come from cloud-init.** By default `armbian-firstrun` deletes and regenerates them
   on the first boot, after ssh has started. `OPENSSHD_REGENERATE_HOST_KEYS=false` in
   `config-rk1.conf` keeps cloud-init's.
+- **Root's password must not be expired** (`chage -d 0 root`) to force a change. cron's PAM account
+  check then refuses every root job ("Authentication token is no longer valid"), including Armbian's
+  log truncation, until the password changes. Armbian leaves the same `chage` commented out
+  (`lib/functions/rootfs/distro-agnostic.sh`).
 - **`/etc/os-release` names Armbian.** Armbian's `base-files` rewrites it. The distro's own is
   `/usr/lib/os-release`, which the distro-version hook in `config-rk1.conf` reads.
 - **Armbian's RK3588 family installs no GPU udev rule.** `rockchip64_common.inc` would install

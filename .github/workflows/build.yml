@@ -92,7 +92,7 @@ jobs:
           [[ "$kernel" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "No kernel version in $name"; exit 1; }
           notes+="Both run Rockchip's vendor kernel $kernel for the Turing RK1 (armbian/linux-rockchip $KERNEL_COMMIT), built with the Armbian build framework at $ARMBIAN_BUILD_SHA.
 
-          First boot is cloud-init (NoCloud). A user-data and meta-data written into the FAT armbi_boot partition before flashing set up the node. Without them, log in as root with password 1234 over SSH or the serial console; it must be changed at the first login. Armbian's usual first-login setup (user, shell, locale, time zone) then runs with: touch /root/.not_logged_in_yet && bash /usr/lib/armbian/armbian-firstlogin. Networking is Armbian's DHCP on every Ethernet port.
+          First boot is cloud-init (NoCloud). A user-data and meta-data written into the FAT armbi_boot partition before flashing set up the node. Without them, log in as root with password 1234 over SSH (the serial console logs root in by itself) and change it; nothing forces the change. Armbian's usual first-login setup (root password, user, shell, locale, time zone) runs with: touch /root/.not_logged_in_yet && bash /usr/lib/armbian/armbian-firstlogin. Networking is Armbian's DHCP on every Ethernet port.
 
           Built from $GITHUB_SHA.
 
