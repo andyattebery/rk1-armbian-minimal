@@ -12,6 +12,7 @@ release.
 | Part | What | From |
 |---|---|---|
 | Kernel, DTB | 6.1.172 `vendor-rk35xx` (rkr7.2), `rk3588-turing-rk1.dtb` | armbian/linux-rockchip `44bbd021`, built by Armbian |
+| Kernel headers | `linux-headers-vendor-rk35xx` for that kernel, for DKMS modules, with what they build with: gcc, make, bison, flex | the same Armbian kernel build; Debian or Ubuntu |
 | Bootloader | U-Boot v2026.07 with the RK3588 SCMI clock fix, at 32 KiB on the eMMC | Armbian |
 | Userspace | Debian 13 trixie or Ubuntu 26.04 resolute, Armbian minimal CLI | Debian or Ubuntu, Armbian |
 | GPU | `libmali-valhall-g610-g29p1` 1.10-1: OpenCL 3.0, Vulkan 1.4 (the device reports 1.4.305), GLES 3.2 | ginkage/libmali-rockchip |
@@ -25,7 +26,7 @@ release.
 | Path | What it is |
 |---|---|
 | `versions.env` | Every pin: the Armbian commit, the kernel commit, and each download's URL and SHA-256. |
-| `userpatches/config-rk1.conf` | The Armbian build config: board, branch, the `cloud-init` extension and the setting that keeps cloud-init's SSH host keys, the kernel-pin hook, the distro-version hook, `.img.xz` output. The release comes from `build.sh`. |
+| `userpatches/config-rk1.conf` | The Armbian build config: board, branch, the kernel headers, the `cloud-init` extension and the setting that keeps cloud-init's SSH host keys, the kernel-pin hook, the distro-version hook, `.img.xz` output. The release comes from `build.sh`. |
 | `userpatches/customize-image.sh` | Runs in the image chroot: GPU, NPU and video; turns cloud-init's networking off. |
 | `userpatches/overlay/` | Files `customize-image.sh` installs: the apt pin for Jellyfin's repo, the udev rules for the GPU (`50-mali.rules`) and for MPP, RGA and the DMA heaps (Jellyfin's), `rknn-requirements.txt`, the hash-locked RKNN Lite2 dependencies, and `99-network-config-disabled.cfg`, which turns cloud-init's networking off. |
 | `userpatches/rknn-requirements.in` | What that lock is compiled from. |
@@ -137,10 +138,10 @@ The first two commands are needed once. The work dir has to be on the machine's 
 
 Debian or Ubuntu packages and `jellyfin-ffmpeg8` update with apt.
 
-Every Armbian package (kernel, DTB, U-Boot, BSP) is held (`BSPFREEZE=yes`). apt.armbian.com's stable
-kernel is 6.1.115, older than this one, and would replace it. Those packages change only by bumping
-the pins in `versions.env` and the hook in `config-rk1.conf`, then flashing the new release. Move off
-Armbian `main` to a stable branch once one carries rkr7.2.
+Every Armbian package (kernel, headers, DTB, U-Boot, BSP) is held (`BSPFREEZE=yes`).
+apt.armbian.com's stable kernel is 6.1.115, older than this one, and would replace it. Those
+packages change only by bumping the pins in `versions.env` and the hook in `config-rk1.conf`, then
+flashing the new release. Move off Armbian `main` to a stable branch once one carries rkr7.2.
 
 ## Licences
 
