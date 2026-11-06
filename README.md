@@ -181,6 +181,10 @@ installs), each under its own licence.
 - **SSH host keys come from cloud-init.** By default `armbian-firstrun` deletes and regenerates them
   on the first boot, after ssh has started. `OPENSSHD_REGENERATE_HOST_KEYS=false` in
   `config-rk1.conf` keeps cloud-init's.
+- **The image's machine-id must stay empty.** Nodes flashed from an image that carries one all share
+  it, and anything that identifies a host by it, Beszel's agent for one, then takes them for a single
+  host. A hook in `config-rk1.conf` empties it as the last step before the rootfs is copied to the
+  image, and systemd makes each node its own on the first boot.
 - **Root's password must not be expired** (`chage -d 0 root`) to force a change. cron's PAM account
   check then refuses every root job ("Authentication token is no longer valid"), including Armbian's
   log truncation, until the password changes. Armbian leaves the same `chage` commented out
