@@ -16,7 +16,7 @@ release.
 | Bootloader | U-Boot v2026.07 with the upstream RK3588 SPL clock fix, at 32 KiB on the eMMC | Armbian |
 | Userspace | Debian 13 trixie or Ubuntu 26.04 resolute, Armbian minimal CLI | Debian or Ubuntu, Armbian |
 | GPU | `libmali-valhall-g610-g29p1` 1.10-1: OpenCL 3.0, Vulkan 1.4 (the device reports 1.4.305), GLES 3.2 | ginkage/libmali-rockchip |
-| NPU | `/usr/lib/librknnrt.so` 2.3.2, `/usr/lib/librkllmrt.so` 1.3.1; RKNN Toolkit Lite2 in the venv `/opt/rknn-lite2` (CPython 3.12: the toolkit's newest wheel is cp312, and both distros' Python is newer) | airockchip, PyPI, uv (its latest release) |
+| NPU | `/usr/lib/librknnrt.so` 2.5.0, `/usr/lib/librkllmrt.so` 1.3.1; RKNN Toolkit Lite2 2.5.0 in the venv `/opt/rknn-lite2` (CPython 3.12: the toolkit's newest wheel is cp312, and both distros' Python is newer) | airockchip, PyPI, uv (its latest release) |
 | Video | `jellyfin-ffmpeg8`, the newest at build time (rkmpp codecs, rkrga filters), in `/usr/lib/jellyfin-ffmpeg/` | repo.jellyfin.org |
 | 2.5 GbE | `r8169` with the RTL8125 firmware, for a Realtek RTL8125 card in the Turing Pi 2's mini-PCIe slot | the kernel, armbian-firmware |
 | Access | cloud-init (NoCloud), from the `user-data` and `meta-data` in the FAT `armbi_boot` partition. Unseeded: root/1234, until changed | Armbian's `cloud-init` extension |
@@ -189,7 +189,8 @@ terms, which are also in `licenses/`:
 - **libmali**, the Mali GPU userspace: Arm's End User Licence Agreement, which allows redistribution
   with a copy of the licence.
 - **librkllmrt**, the RKLLM runtime: Rockchip's BSD-style licence, from airockchip/rknn-llm.
-- **librknnrt and RKNN Toolkit Lite2**: Rockchip's copyright statement, from airockchip/rknn-toolkit2.
+- **librknnrt and RKNN Toolkit Lite2**: Rockchip's RKNN SDK License, from airockchip/rknn-toolkit2.
+  It replaced Rockchip's copyright statement there on 2025-07-29, after release 2.3.2.
 
 Everything else comes from Debian or Ubuntu, Armbian and Jellyfin (their copyright files are in the
 image's `/usr/share/doc`), and from PyPI and Astral (the venv's packages, uv, and the CPython uv
@@ -243,6 +244,12 @@ installs), each under its own licence.
     re-pinning to the current release.
 - **No panthor.** The `panthor-gpu` overlay binds the GPU to panthor instead of kbase, and libmali
   needs kbase. This build sets no overlays.
+- **`RKNN_LOG_LEVEL=4` crashes RKNN 2.5.0.** With that debug logging on, librknnrt 2.5.0 segfaulted in
+  `rknn_run` on rknn-toolkit2's resnet18 example, called through the C API; 2.3.2 didn't. Lower levels
+  weren't tried.
+- **RKNN Toolkit Lite2 opens `/usr/lib/librknnrt.so` itself.** `LD_LIBRARY_PATH` doesn't change which
+  runtime it loads, so testing another runtime means calling it directly (the RKNN C API, through
+  ctypes as immich does).
 - **`jellyfin-ffmpeg` is not on PATH.** It is `/usr/lib/jellyfin-ffmpeg/ffmpeg`. The RGA filters take
   hardware frames only: decode with
   `-init_hw_device rkmpp=rk -hwaccel rkmpp -hwaccel_output_format drm_prime` before `scale_rkrga`,
