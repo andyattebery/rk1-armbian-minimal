@@ -57,10 +57,25 @@ ldconfig
 # resolute 3.14), so uv installs CPython 3.12 into /opt/python and a venv on it at
 # /opt/rknn-lite2. Dependencies come from the hash-locked rknn-requirements.txt, wheels only; the
 # toolkit wheel is checked against its pin.
+# uv is its latest release: the tag is where GitHub's /releases/latest redirects to, and the tarball
+# is checked against the .sha256 published with it.
 # Bytecode is compiled now because the venv is root-owned and its users can't write __pycache__.
+UV_TAG="$(curl -fsS --retry 3 -o /dev/null -w '%{redirect_url}' https://github.com/astral-sh/uv/releases/latest)"
+UV_TAG="${UV_TAG##*/}"
+if [[ ! "$UV_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "customize-image.sh: no uv release tag in GitHub's /releases/latest redirect: '$UV_TAG'" >&2
+    exit 1
+fi
+UV_URL="https://github.com/astral-sh/uv/releases/download/$UV_TAG/uv-aarch64-unknown-linux-gnu.tar.gz"
+UV_SHA256="$(curl -fsSL --retry 3 "$UV_URL.sha256" | awk '{print $1}')"
+if [[ ! "$UV_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "customize-image.sh: no SHA-256 in $UV_URL.sha256: '$UV_SHA256'" >&2
+    exit 1
+fi
 fetch_verified "$UV_URL" "$UV_SHA256" "$WORK/uv.tar.gz"
 tar -xzf "$WORK/uv.tar.gz" -C "$WORK"
 install -m 0755 "$WORK/uv-aarch64-unknown-linux-gnu/uv" /usr/local/bin/uv
+uv --version
 export UV_PYTHON_INSTALL_DIR=/opt/python UV_MANAGED_PYTHON=1 UV_NO_CACHE=1 UV_COMPILE_BYTECODE=1
 uv python install --no-bin 3.12
 uv venv --python 3.12 /opt/rknn-lite2
@@ -70,8 +85,8 @@ WHEEL="$WORK/${RKNN_LITE_WHEEL_URL##*/}"
 fetch_verified "$RKNN_LITE_WHEEL_URL" "$RKNN_LITE_WHEEL_SHA256" "$WHEEL"
 uv pip install --python /opt/rknn-lite2/bin/python --no-deps "$WHEEL"
 
-# Video: jellyfin-ffmpeg8, which bundles its own MPP and RGA, from Jellyfin's repo. The pin file
-# lets nothing else come from there.
+# Video: jellyfin-ffmpeg8, which bundles its own MPP and RGA, from Jellyfin's repo: the newest
+# there, which apt then updates on the node. The pin file lets nothing else come from there.
 install -d -m 0755 /etc/apt/keyrings
 fetch_verified "$JELLYFIN_KEY_URL" "$JELLYFIN_KEY_SHA256" /etc/apt/keyrings/jellyfin.asc
 chmod 0644 /etc/apt/keyrings/jellyfin.asc
@@ -85,11 +100,13 @@ Signed-By: /etc/apt/keyrings/jellyfin.asc
 EOF
 install -m 0644 "$OVERLAY/jellyfin.pref" /etc/apt/preferences.d/jellyfin
 apt-get update
-apt-get install -y --no-install-recommends "jellyfin-ffmpeg8=$JELLYFIN_FFMPEG_VERSION-$RELEASE"
+apt-get install -y --no-install-recommends jellyfin-ffmpeg8
+dpkg-query -W jellyfin-ffmpeg8
 
 # Device permissions: the GPU (Armbian's own rule from packages/bsp/rk3399, which its RK3588
-# family no longer installs: rockchip-rk3588.conf makes family_tweaks_bsp a no-op), and MPP, RGA
-# and the DMA heaps (Jellyfin's rules).
+# family doesn't install: rockchip-rk3588.conf's family_tweaks_bsp installs only 60-media.rules,
+# for media, RGA, MPP and the DMA heaps), and MPP, RGA and the DMA heaps (Jellyfin's rules, which
+# udev applies after Armbian's, and which open the system heaps to every user).
 install -m 0644 "$OVERLAY/50-mali.rules" /etc/udev/rules.d/
 install -m 0644 "$OVERLAY/99-rk-device-permissions.rules" /etc/udev/rules.d/
 

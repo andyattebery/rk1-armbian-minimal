@@ -36,7 +36,8 @@ jobs:
       - name: Build the image
         run: scripts/build.sh --release "$RELEASE" --work-dir "$RUNNER_TEMP/work" --out "$RUNNER_TEMP/out"
 
-      # The .img.xz, .sha and .distro, for the publish job. The image is already xz-compressed.
+      # The .img.xz, .sha, .distro and .armbian, for the publish job. The image is already
+      # xz-compressed.
       - uses: actions/upload-artifact@v7
         with:
           name: image-${{ matrix.release }}
@@ -65,11 +66,11 @@ jobs:
           . ./versions.env
           shopt -s nullglob
           # Armbian-unofficial_<armbian version>_Turing-rk1_<release>_vendor_<kernel>-ci_minimal.img.xz
-          armbian_version="" kernel="" notes="" assets=()
+          armbian_version="" kernel="" armbian_commit="" notes="" assets=()
           for release in trixie resolute; do
             images=("$RUNNER_TEMP"/out/*_"$release"_vendor_*.img.xz)
-            if [[ ${#images[@]} -ne 1 || ! -s "${images[0]}.sha" || ! -s "${images[0]}.distro" ]]; then
-              echo "Expected one $release .img.xz with its .sha and .distro, found: ${images[*]}"
+            if [[ ${#images[@]} -ne 1 || ! -s "${images[0]}.sha" || ! -s "${images[0]}.distro" || ! -s "${images[0]}.armbian" ]]; then
+              echo "Expected one $release .img.xz with its .sha, .distro and .armbian, found: ${images[*]}"
               exit 1
             fi
             image="${images[0]}"
@@ -77,10 +78,12 @@ jobs:
             v="$(cut -d _ -f 2 <<< "$name")"
             # Armbian's cloud-init extension appends -ci to the kernel field (rootfs-to-image.sh:19).
             k="$(cut -d _ -f 6 <<< "$name")"; k="${k%-ci}"
+            # Each build resolves the branch's head itself, so the two differ if it moved in between.
+            c="$(< "$image.armbian")"
             if [[ -z "$armbian_version" ]]; then
-              armbian_version="$v" kernel="$k"
-            elif [[ "$v" != "$armbian_version" || "$k" != "$kernel" ]]; then
-              echo "$name has a different Armbian or kernel version from the other image"
+              armbian_version="$v" kernel="$k" armbian_commit="$c"
+            elif [[ "$v" != "$armbian_version" || "$k" != "$kernel" || "$c" != "$armbian_commit" ]]; then
+              echo "$name has a different Armbian version, kernel version or Armbian commit from the other image"
               exit 1
             fi
             printf -v paragraph '**%s**\n`%s`\nsha256 `%s`\n\n' \
@@ -90,7 +93,10 @@ jobs:
           done
           [[ "$armbian_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || { echo "No Armbian version in $name"; exit 1; }
           [[ "$kernel" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "No kernel version in $name"; exit 1; }
-          notes+="Both run Rockchip's vendor kernel $kernel for the Turing RK1 (armbian/linux-rockchip $KERNEL_COMMIT), built with the Armbian build framework at $ARMBIAN_BUILD_SHA.
+          [[ "$armbian_commit" =~ ^[0-9a-f]{40}$ ]] || { echo "No Armbian commit in $name.armbian"; exit 1; }
+          notes+="Both run Rockchip's vendor kernel $kernel for the Turing RK1, built with the Armbian build framework from its $ARMBIAN_BUILD_BRANCH branch at $armbian_commit.
+
+          Nothing is held: apt upgrades the Armbian packages, the kernel among them, once apt.armbian.com has higher versions of them, as it does the distro's packages and jellyfin-ffmpeg8. The bootloader on the eMMC changes only with a flash.
 
           First boot is cloud-init (NoCloud). A user-data and meta-data written into the FAT armbi_boot partition before flashing set up the node. Without them, log in as root with password 1234 over SSH (the serial console logs root in by itself) and change it; nothing forces the change. Armbian's usual first-login setup (root password, user, shell, locale, time zone) runs with: touch /root/.not_logged_in_yet && bash /usr/lib/armbian/armbian-firstlogin. Networking is Armbian's DHCP on every Ethernet port.
 

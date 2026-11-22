@@ -11,13 +11,13 @@ release.
 
 | Part | What | From |
 |---|---|---|
-| Kernel, DTB | 6.1.172 `vendor-rk35xx` (rkr7.2), `rk3588-turing-rk1.dtb` | armbian/linux-rockchip `44bbd021`, built by Armbian |
+| Kernel, DTB | 6.1.172 `vendor-rk35xx` (rkr7.2), `rk3588-turing-rk1.dtb` | armbian/linux-rockchip `rk-6.1-rkr7.2`, at the commit Armbian's `v26.11` branch pins, built by Armbian |
 | Kernel headers | `linux-headers-vendor-rk35xx` for that kernel, for DKMS modules, with what they build with: gcc, make, bison, flex | the same Armbian kernel build; Debian or Ubuntu |
-| Bootloader | U-Boot v2026.07 with the RK3588 SCMI clock fix, at 32 KiB on the eMMC | Armbian |
+| Bootloader | U-Boot v2026.07 with the upstream RK3588 SPL clock fix, at 32 KiB on the eMMC | Armbian |
 | Userspace | Debian 13 trixie or Ubuntu 26.04 resolute, Armbian minimal CLI | Debian or Ubuntu, Armbian |
 | GPU | `libmali-valhall-g610-g29p1` 1.10-1: OpenCL 3.0, Vulkan 1.4 (the device reports 1.4.305), GLES 3.2 | ginkage/libmali-rockchip |
-| NPU | `/usr/lib/librknnrt.so` 2.3.2, `/usr/lib/librkllmrt.so` 1.3.1; RKNN Toolkit Lite2 in the venv `/opt/rknn-lite2` (CPython 3.12: the toolkit's newest wheel is cp312, and both distros' Python is newer) | airockchip, PyPI, uv |
-| Video | `jellyfin-ffmpeg8` 8.1.3-1 (rkmpp codecs, rkrga filters) in `/usr/lib/jellyfin-ffmpeg/` | repo.jellyfin.org |
+| NPU | `/usr/lib/librknnrt.so` 2.3.2, `/usr/lib/librkllmrt.so` 1.3.1; RKNN Toolkit Lite2 in the venv `/opt/rknn-lite2` (CPython 3.12: the toolkit's newest wheel is cp312, and both distros' Python is newer) | airockchip, PyPI, uv (its latest release) |
+| Video | `jellyfin-ffmpeg8`, the newest at build time (rkmpp codecs, rkrga filters), in `/usr/lib/jellyfin-ffmpeg/` | repo.jellyfin.org |
 | 2.5 GbE | `r8169` with the RTL8125 firmware, for a Realtek RTL8125 card in the Turing Pi 2's mini-PCIe slot | the kernel, armbian-firmware |
 | Access | cloud-init (NoCloud), from the `user-data` and `meta-data` in the FAT `armbi_boot` partition. Unseeded: root/1234, until changed | Armbian's `cloud-init` extension |
 
@@ -25,8 +25,8 @@ release.
 
 | Path | What it is |
 |---|---|
-| `versions.env` | Every pin: the Armbian commit, the kernel commit, and each download's URL and SHA-256. |
-| `userpatches/config-rk1.conf` | The Armbian build config: board, branch, the kernel headers, the `cloud-init` extension and the setting that keeps cloud-init's SSH host keys, the kernel-pin hook, the distro-version hook, `.img.xz` output. The release comes from `build.sh`. |
+| `versions.env` | The pins: the Armbian branch the build follows, and the downloads no apt repo serves, each with its URL, its SHA-256 and why it is at that version. |
+| `userpatches/config-rk1.conf` | The Armbian build config: board, branch, the kernel headers, the `cloud-init` extension and the setting that keeps cloud-init's SSH host keys, `.img.xz` output, the distro-version hook and the machine-id hook. The release comes from `build.sh`. |
 | `userpatches/customize-image.sh` | Runs in the image chroot: GPU, NPU and video; turns cloud-init's networking off. |
 | `userpatches/overlay/` | Files `customize-image.sh` installs: the apt pin for Jellyfin's repo, the udev rules for the GPU (`50-mali.rules`) and for MPP, RGA and the DMA heaps (Jellyfin's), `rknn-requirements.txt`, the hash-locked RKNN Lite2 dependencies, and `99-network-config-disabled.cfg`, which turns cloud-init's networking off. |
 | `userpatches/rknn-requirements.in` | What that lock is compiled from. |
@@ -102,14 +102,17 @@ build host's (`Etc/UTC` from GitHub's runners).
 
 `scripts/build.sh --release <trixie|resolute> --work-dir <dir> --out <dir>` builds one release on
 Debian 13 or Ubuntu 24.04, arm64 or amd64, as a user with passwordless sudo. It:
-1. fetches armbian/build at `ARMBIAN_BUILD_SHA` into `<work-dir>/armbian-build`;
+1. fetches the head of armbian/build's `ARMBIAN_BUILD_BRANCH` (`v26.11`) into
+   `<work-dir>/armbian-build`. Its `config/sources/git_sources.json` pins the kernel's
+   armbian/linux-rockchip commit.
 2. copies `userpatches/` in;
 3. runs `./compile.sh build rk1 RELEASE=<release> PREFER_DOCKER=no`;
-4. writes `<name>.img.xz`, `<name>.img.xz.sha` and `<name>.img.xz.distro` (the distro's version, one
-   line) to `<out>`.
+4. writes `<name>.img.xz`, `<name>.img.xz.sha`, `<name>.img.xz.distro` (the distro's version) and
+   `<name>.img.xz.armbian` (the Armbian commit) to `<out>`.
 
-The first run downloads Armbian's cached kernel, U-Boot and root filesystem, or builds them. Reusing
-the work dir reuses those caches.
+A build takes the branch as it is then, so a later one picks up Armbian's fixes to it with no
+change here; `<name>.img.xz.armbian` says which commit each used. The first run downloads Armbian's
+cached kernel, U-Boot and root filesystem, or builds them. Reusing the work dir reuses those caches.
 
 **In CI.** [.github/workflows/build.yml](.github/workflows/build.yml) runs it once per release, in
 parallel, on GitHub's `ubuntu-24.04-arm` runner: arm64 like the image, so the root filesystem builds
@@ -119,7 +122,9 @@ without qemu.
 - **What it publishes:** one release with both images, only when both built. It is named
   `Armbian <Armbian version>, kernel <kernel version> (build <run number>)` and tagged
   `<kernel version>-<run number>` (for example `6.1.172-1`). It carries each `.img.xz`, its `.sha` and the three licence texts, and
-  its notes give each image's distro version and sha256.
+  its notes give each image's distro version and sha256, and the Armbian commit. The two builds
+  must have used the same commit: if the branch moved between them, nothing is published, and a new
+  run from the Actions tab builds both again.
 - **Not Armbian's own GitHub Action.** Its `action.yml` merges the unpinned `armbian/os` userpatches
   into the build, versions the image from `armbian/ci`, and uploads build logs to Armbian's paste
   service. None of these can be turned off.
@@ -136,12 +141,46 @@ The first two commands are needed once. The work dir has to be on the machine's 
 
 ## Updating
 
-Debian or Ubuntu packages and `jellyfin-ffmpeg8` update with apt.
+apt updates the image; nothing in it is held.
+- **Debian or Ubuntu packages**, from the distro's repos.
+- **`jellyfin-ffmpeg8`**, from repo.jellyfin.org, which `jellyfin.pref` lets supply nothing else.
+- **Armbian's packages** (kernel, headers, DTB, U-Boot, BSP, firmware), from apt.armbian.com. Their
+  version is the `VERSION` of the branch commit they were built from, now `26.11.0-trunk`. That
+  sorts above Armbian's earlier stable releases (26.8.x) and below its 26.11 ones (26.11.1 on), so
+  apt replaces them with each 26.11 release of them that apt.armbian.com publishes, and never with an
+  earlier release's. It goes by version, not date: an image built from a commit newer than the latest
+  release still gets that release's packages. On v25.11 and v26.02, Armbian set `VERSION` to the
+  release number; an image built then carries that release's version, and apt keeps its packages
+  until the next one. A build from `main` would sort above every 26.11 release once `main`'s
+  `VERSION` moves past 26.11, and apt would keep its packages until Armbian's next series.
 
-Every Armbian package (kernel, headers, DTB, U-Boot, BSP) is held (`BSPFREEZE=yes`).
-apt.armbian.com's stable kernel is 6.1.115, older than this one, and would replace it. Those
-packages change only by bumping the pins in `versions.env` and the hook in `config-rk1.conf`, then
-flashing the new release. Move off Armbian `main` to a stable branch once one carries rkr7.2.
+apt doesn't change:
+- **The bootloader on the eMMC.** apt upgrades the U-Boot package, but the package writes the eMMC
+  only on boards built with `FORCE_UBOOT_UPDATE=yes`, and the RK1 isn't one (`uboot_postinst_base`
+  in Armbian's `lib/functions/compilation/uboot.sh`). A new bootloader comes with a flash.
+- **The downloads in `versions.env`** (libmali, the RKNN and RKLLM runtimes, RKNN Toolkit Lite2, and
+  Jellyfin's signing key), **uv and the RKNN venv.** They change with a new release of this image.
+  `versions.env` says why each download is at its version. If Jellyfin replaces its key, apt stops
+  updating `jellyfin-ffmpeg8` until the node has the new one.
+
+**Releases up to 6.1.172-9 hold every Armbian package** (`BSPFREEZE=yes`), so apt never updates them
+on a node flashed from one. `apt-mark showhold` lists the holds, and `sudo apt-mark unhold` with
+those package names releases them.
+
+**The kernel line is whatever Armbian builds as `vendor`**, today rk-6.1-rkr7.2 (6.1). If a later
+Armbian release moves `vendor` to a newer line, apt follows, because the package names stay the
+same. libmali and the NPU runtimes fit rk-6.12-rkr1.1, the line Armbian builds as `vendor-next`, as
+well: it has the same kbase (g29p1-11eac0) and rknpu (0.9.8). Jellyfin's Rockchip docs ask for a BSP
+5.10 or 6.1 kernel.
+
+**DKMS modules that autoinstall, as ZFS's does, are rebuilt with the kernel**, even when an upgraded
+kernel keeps its version string (`6.1.172-vendor-rk35xx`), which is how DKMS tells kernels apart.
+The kernel package's prerm runs the hooks in `/etc/kernel/prerm.d`, where DKMS's unbuilds every
+module built for that kernel, and the headers package's postinst runs DKMS's autoinstall hook in
+`/etc/kernel/header_postinst.d`, which builds the ones that autoinstall against the new headers. A
+module with `AUTOINSTALL` unset is gone after the upgrade until it is installed again. Reinstalling
+this image's kernel, DTB and headers debs rewrote a node's ZFS modules this way, and ZFS loaded after
+the reboot.
 
 ## Licences
 
@@ -164,10 +203,11 @@ installs), each under its own licence.
   between Docker and sudo before it reads `config-rk1.conf`. On a Mac, OrbStack's Docker engine can't
   run Armbian's Docker mode anyway: Armbian hands static loop devices only to Docker Desktop and
   Rancher, and on any other engine passes the Mac's nonexistent `/dev/loop*`.
-- **userpatches must be inside the checkout.** On this Armbian commit `USERPATCHES_PATH` is
-  read-only, set to `<checkout>/userpatches`, whatever the docs say. `build.sh` rsyncs `userpatches/`
-  in on every run, so edit it here.
-- **No `lib.config`.** Armbian `main` aborts a build that has `userpatches/lib.config`.
+- **The build reads a copy of `userpatches/`.** `build.sh` rsyncs it into the checkout, Armbian's
+  default `USERPATCHES_PATH`, on every run, so edit it here. Armbian can take another directory, but
+  it creates templates and a directory skeleton in the one it uses.
+- **No `lib.config`.** Armbian aborts a build that has `userpatches/lib.config` ("lib.config is not
+  supported anymore").
 - **`customize-image.sh` runs without Armbian's apt repo.** Only the release's own repos (Debian's or
   Ubuntu's) are enabled at that point.
 - **`/boot` is FAT:** the 512 MiB `armbi_boot` partition, which the `cloud-init` extension requires
@@ -192,14 +232,15 @@ installs), each under its own licence.
 - **`/etc/os-release` names Armbian.** Armbian's `base-files` rewrites it. The distro's own is
   `/usr/lib/os-release`, which the distro-version hook in `config-rk1.conf` reads.
 - **Armbian's RK3588 family installs no GPU udev rule.** `rockchip64_common.inc` would install
-  `50-mali.rules`, but `rockchip-rk3588.conf` replaces that function with a no-op, so `/dev/mali0`
-  would be root-only. The overlay brings the rule.
-- **libmali must match the kernel's GPU driver.** The vendor kernel's kbase is DDK g29p1, so the
-  userspace is g29p1.
+  `50-mali.rules`, but `rockchip-rk3588.conf` replaces that function with one that installs only
+  `60-media.rules` (media, RGA, MPP and the DMA heaps), so `/dev/mali0` would be root-only. The
+  overlay brings the rule.
+- **libmali must match the kernel's GPU driver.** The vendor kernel's kbase is DDK g29p1, on
+  rk-6.1-rkr7.2 and on rk-6.12-rkr1.1, so the userspace is g29p1.
   - If OpenCL or Vulkan finds no device, the fallback is tsukumijima's g24p0 packages. kbase
     negotiates down to an older userspace, but every g24p0 report is on an older kbase (g25p0, rkr5.1).
-  - ginkage deletes superseded releases, so a 404 at the libmali download means re-pinning to the
-    current release.
+  - ginkage has deleted superseded releases before, so a 404 at the libmali download means
+    re-pinning to the current release.
 - **No panthor.** The `panthor-gpu` overlay binds the GPU to panthor instead of kbase, and libmali
   needs kbase. This build sets no overlays.
 - **`jellyfin-ffmpeg` is not on PATH.** It is `/usr/lib/jellyfin-ffmpeg/ffmpeg`. The RGA filters take

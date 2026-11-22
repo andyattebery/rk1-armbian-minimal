@@ -10,10 +10,11 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 usage() {
     echo "Usage: $(basename "$0") --release <trixie|resolute> --work-dir <dir> --out <dir>"
     echo
-    echo "Fetches armbian/build at ARMBIAN_BUILD_SHA (versions.env) into <work-dir>/armbian-build,"
-    echo "copies userpatches/ and versions.env into it, builds the release (trixie: Debian 13,"
-    echo "resolute: Ubuntu 26.04), and puts <name>.img.xz, <name>.img.xz.sha and"
-    echo "<name>.img.xz.distro (the distro's version, one line) in <out>."
+    echo "Fetches the head of armbian/build's ARMBIAN_BUILD_BRANCH (versions.env) into"
+    echo "<work-dir>/armbian-build, copies userpatches/ and versions.env into it, builds the release"
+    echo "(trixie: Debian 13, resolute: Ubuntu 26.04), and puts <name>.img.xz and <name>.img.xz.sha in"
+    echo "<out>, with <name>.img.xz.distro (the distro's version) and <name>.img.xz.armbian (the"
+    echo "Armbian commit), one line each."
     echo
     echo "<work-dir> must be on a case-sensitive filesystem: if Armbian has to build the kernel, its"
     echo "tree has file names that differ only by case. Reusing it reuses Armbian's caches."
@@ -44,33 +45,37 @@ done
 # shellcheck source=SCRIPTDIR/../versions.env
 source "$REPO_DIR/versions.env"
 
-# The kernel pin is in two places: versions.env and the hook in config-rk1.conf.
-if ! grep -qF "KERNELBRANCH='commit:$KERNEL_COMMIT'" "$REPO_DIR/userpatches/config-rk1.conf"; then
-    echo "Error: userpatches/config-rk1.conf does not pin commit:$KERNEL_COMMIT (versions.env)"
-    exit 1
-fi
-
 mkdir -p "$WORK" "$OUT"
 WORK="$(cd "$WORK" && pwd -P)"
 OUT="$(cd "$OUT" && pwd -P)"
 SRC="$WORK/armbian-build"
 
-# A depth-1 fetch of the pinned commit, only when it is not already there; the build needs no
+# The branch's head, resolved once, so that the build and <name>.img.xz.armbian name one commit.
+echo "Resolving armbian/build $ARMBIAN_BUILD_BRANCH..."
+ARMBIAN_COMMIT="$(git ls-remote "$ARMBIAN_BUILD_REPO" "refs/heads/$ARMBIAN_BUILD_BRANCH" | awk '{print $1}')"
+if [[ ! "$ARMBIAN_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Error: no single branch $ARMBIAN_BUILD_BRANCH in $ARMBIAN_BUILD_REPO"
+    exit 1
+fi
+
+# A depth-1 fetch of that commit, only when it is not already there; the build needs no
 # history, and a repeat fetch downloads the whole tree again.
-echo "Checking out armbian/build $ARMBIAN_BUILD_SHA..."
+echo "Checking out armbian/build $ARMBIAN_COMMIT..."
 if [[ ! -d "$SRC/.git" ]]; then
     git init -q "$SRC"
     git -C "$SRC" remote add origin "$ARMBIAN_BUILD_REPO"
 fi
-if ! git -C "$SRC" cat-file -e "$ARMBIAN_BUILD_SHA^{commit}" 2>/dev/null; then
-    git -C "$SRC" fetch -q --depth 1 origin "$ARMBIAN_BUILD_SHA"
+if ! git -C "$SRC" cat-file -e "$ARMBIAN_COMMIT^{commit}" 2>/dev/null; then
+    git -C "$SRC" fetch -q --depth 1 origin "$ARMBIAN_COMMIT"
 fi
-git -C "$SRC" checkout -q --detach "$ARMBIAN_BUILD_SHA"
-[[ "$(git -C "$SRC" rev-parse HEAD)" == "$ARMBIAN_BUILD_SHA" ]]
+git -C "$SRC" checkout -q --detach "$ARMBIAN_COMMIT"
+[[ "$(git -C "$SRC" rev-parse HEAD)" == "$ARMBIAN_COMMIT" ]]
 
-# Armbian reads userpatches only from inside its checkout (entrypoint.sh declares USERPATCHES_PATH
-# read-only). A compile.sh started with sudo, rather than relaunching itself through sudo as below,
-# leaves userpatches/ owned by root, and rsync runs as this user.
+# The build reads a copy of userpatches/ in the checkout, Armbian's default USERPATCHES_PATH.
+# Armbian can be pointed at another directory, but it creates templates and a directory skeleton
+# in the one it uses (lib/functions/cli/utils-cli.sh), and the copy also gets versions.env, so this
+# repo's userpatches/ stays as git has it. A compile.sh started with sudo, rather than relaunching
+# itself through sudo as below, leaves userpatches/ owned by root, and rsync runs as this user.
 [[ ! -e "$SRC/userpatches" ]] || sudo chown -R "$(id -u):$(id -g)" "$SRC/userpatches"
 rsync -a --delete "$REPO_DIR/userpatches/" "$SRC/userpatches/"
 cp "$REPO_DIR/versions.env" "$SRC/userpatches/overlay/versions.env"
@@ -113,8 +118,10 @@ fi
 mv -f "$OUT/.$NAME.partial" "$OUT/$NAME"
 printf '%s  %s\n' "$GOT" "$NAME" > "$OUT/$NAME.sha"
 cp "$SRC/output/distro.txt" "$OUT/$NAME.distro"
+printf '%s\n' "$ARMBIAN_COMMIT" > "$OUT/$NAME.armbian"
 sudo rm -f "$SRC"/output/images/*.img* "$SRC/output/distro.txt"
 
 echo
 echo "Image: $OUT/$NAME ($(du -h "$OUT/$NAME" | cut -f 1))"
 echo "Distro: $(cat "$OUT/$NAME.distro")"
+echo "Armbian: $ARMBIAN_BUILD_BRANCH at $ARMBIAN_COMMIT"
